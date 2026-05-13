@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "netlify dev",
-    "build": "echo build-done"
+    "build": "echo build-done",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev"
   },
-  "dependencies": {}
+  "devDependencies": {
+    "wrangler": "^4.90.1"
+  }
 }
