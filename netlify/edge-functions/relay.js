@@ -1,62 +1,52 @@
-const TARGET_BASE = (Netlify.env.get("TARGET_DOMAIN") || "").replace(/\/$/, "");
-
-const STRIP_HEADERS = new Set([
-  "host",
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "forwarded",
-  "x-forwarded-host",
-  "x-forwarded-proto",
-  "x-forwarded-port",
-  "x-forwarded-for",
-  "x-real-ip",
-]);
-
-export default async function handler(request) {
-  if (!TARGET_BASE) {
-    return new Response("Misconfigured: TARGET_DOMAIN is not set", { status: 500 });
-  }
-
+export default async (request, context) => {
   try {
-    const url = new URL(request.url);
-    const targetUrl = TARGET_BASE + url.pathname + url.search;
+    const backend = process.env.TARGET_DOMAIN
 
-    const headers = new Headers();
-    for (const [key, value] of request.headers) {
-      const k = key.toLowerCase();
-      if (STRIP_HEADERS.has(k)) continue;
-      if (k.startsWith("x-nf-") || k.startsWith("x-netlify-")) continue;
-      headers.set(k, value);
+    if (!backend) {
+      return new Response('TARGET_DOMAIN missing', {
+        status: 500
+      })
     }
 
-    const method = request.method;
-    const fetchOptions = {
-      method,
+    const url = new URL(request.url)
+
+    const upstream = backend + url.pathname + url.search
+
+    const headers = new Headers(request.headers)
+
+    headers.delete('host')
+    headers.delete('x-forwarded-for')
+    headers.delete('cf-connecting-ip')
+    headers.delete('content-length')
+
+    const response = await fetch(upstream, {
+      method: request.method,
       headers,
-      redirect: "manual",
-      body: (method !== "GET" && method !== "HEAD") ? request.body : undefined,
-    };
+      body:
+        request.method === 'GET' || request.method === 'HEAD'
+          ? undefined
+          : request.body,
+      duplex: 'half',
+      redirect: 'manual'
+    })
 
-    const upstream = await fetch(targetUrl, fetchOptions);
+    const responseHeaders = new Headers(response.headers)
 
-    const responseHeaders = new Headers();
-    for (const [key, value] of upstream.headers) {
-      if (key.toLowerCase() !== "transfer-encoding") {
-        responseHeaders.set(key, value);
-      }
-    }
+    responseHeaders.delete('content-encoding')
+    responseHeaders.delete('content-length')
+    responseHeaders.delete('transfer-encoding')
 
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
-  } catch {
-    return new Response("Bad Gateway: Relay Failed", { status: 502 });
+    responseHeaders.set('cache-control', 'no-store')
+    responseHeaders.set('x-relay', 'edge-stream')
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders
+    })
+  } catch (err) {
+    return new Response('relay error', {
+      status: 502
+    })
   }
 }
